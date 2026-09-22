@@ -1,0 +1,159 @@
+name: Build and prepare Boost for tvOS
+
+on:
+  workflow_dispatch:
+    inputs:
+      boost_version:
+        description: Boost version to build
+        required: true
+        default: 1.92.0
+        type: string
+      operation:
+        description: Validate only, or commit the final checksum and preserve release artifacts
+        required: true
+        default: validate
+        type: choice
+        options:
+          - validate
+          - prepare
+  push:
+    branches:
+      - master
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: boost-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    # Intel is required for the x86_64 Simulator slice in these legacy releases.
+    runs-on: macos-15-intel
+    env:
+      # Master validates the newest supported version. A manual prepare run
+      # preserves the tested binaries and commits their exact SwiftPM checksum.
+      BOOST_VERSION: ${{ inputs.boost_version || '1.92.0' }}
+      TVOS_MIN_VERSION: "9.0"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Validate supported release
+        run: case "$BOOST_VERSION" in 1.92.0) ;; *) exit 1 ;; esac
+
+      - name: Build release archive
+        run: |
+          log="$RUNNER_TEMP/build-release.log"
+          if ! ./scripts/build-boost-tvos.sh >"$log" 2>&1; then
+            tail -n 200 "$log"
+            exit 1
+          fi
+          echo "Built Boost ${BOOST_VERSION} release archive."
+
+      - name: Inspect binary and checksums
+        run: ./scripts/validate-artifacts.sh
+
+      - name: Build XCFramework example
+        run: |
+          log="$RUNNER_TEMP/xcframework-example.log"
+          if ! ./example-xcframework/build.sh \
+            "dist/ofxtvOSBoost-${BOOST_VERSION}.tar.gz" >"$log" 2>&1; then
+            tail -n 200 "$log"
+            exit 1
+          fi
+          echo "Validated the XCFramework example."
+
+      - name: Run complete suite in tvOS Simulator
+        run: |
+          mkdir -p libs/boost/tvos
+          ditto -x -k "dist/ofxtvOSBoost-${BOOST_VERSION}-xcframework.zip" libs/boost/tvos
+          ./scripts/test-simulator.sh
+
+      - name: Build Swift package example
+        run: |
+          log="$RUNNER_TEMP/swift-package-example.log"
+          if ! ./example-swift-package/build.sh \
+            "dist/ofxtvOSBoost-${BOOST_VERSION}.tar.gz" >"$log" 2>&1; then
+            tail -n 200 "$log"
+            exit 1
+          fi
+          echo "Validated the Swift package example."
+
+      - name: Install CocoaPods
+        run: |
+          log="$RUNNER_TEMP/cocoapods-install.log"
+          if ! sudo gem install cocoapods --no-document >"$log" 2>&1; then
+            tail -n 200 "$log"
+            exit 1
+          fi
+          echo "Installed CocoaPods."
+
+      - name: Validate CocoaPods package
+        run: |
+          work="$(mktemp -d)"
+          tar -xzf "dist/ofxtvOSBoost-${BOOST_VERSION}.tar.gz" -C "$work"
+          package="$work/ofxtvOSBoost-${BOOST_VERSION}"
+          cp "dist/ofxtvOSBoost.podspec" "$package/ofxtvOSBoost.podspec"
+          cd "$package"
+          log="$RUNNER_TEMP/cocoapods-lib-lint.log"
+          if ! pod lib lint ofxtvOSBoost.podspec --platforms=tvos >"$log" 2>&1; then
+            tail -n 200 "$log"
+            exit 1
+          fi
+          echo "Validated the CocoaPods package."
+
+      - name: Commit prepared SwiftPM checksum
+        if: github.event_name == 'workflow_dispatch' && inputs.operation == 'prepare'
+        env:
+          PREPARED_BY: ${{ github.actor }}
+        run: |
+          test "$GITHUB_REF" = "refs/heads/master"
+          zip="dist/ofxtvOSBoost-${BOOST_VERSION}-xcframework.zip"
+          checksum="$(swift package compute-checksum "$zip")"
+          grep -Fq "/releases/download/${BOOST_VERSION}/ofxtvOSBoost-${BOOST_VERSION}-xcframework.zip" Package.swift
+          sed -E "s/(checksum: \")[0-9a-f]{64}(\")/\1${checksum}\2/" Package.swift > "$RUNNER_TEMP/Package.swift"
+          mv "$RUNNER_TEMP/Package.swift" Package.swift
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if ! git diff --quiet -- Package.swift; then
+            git add Package.swift
+            git commit -m "Finalize Boost ${BOOST_VERSION} prepared checksum [skip ci]"
+          fi
+          ./scripts/finalize-prepared-artifacts.sh "$BOOST_VERSION" dist
+          ./scripts/validate-artifacts.sh
+          cp build/logs/tvos-simulator-report.txt dist/tvos-simulator-report.txt
+          source_sha="$(git rev-parse HEAD)"
+          {
+            echo "BOOST_VERSION=$BOOST_VERSION"
+            echo "SOURCE_SHA=$source_sha"
+            echo "XCFRAMEWORK_SHA256=$checksum"
+            echo "PREPARATION_RUN_ID=$GITHUB_RUN_ID"
+            echo "PREPARED_BY=$PREPARED_BY"
+          } > dist/release-manifest.env
+          grep -Fq "checksum: \"${checksum}\"" Package.swift
+          (cd dist && shasum -a 256 -c "ofxtvOSBoost-${BOOST_VERSION}-xcframework.zip.sha256")
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: ofxtvOSBoost-${{ env.BOOST_VERSION }}
+          path: |
+            dist/ofxtvOSBoost-${{ env.BOOST_VERSION }}.tar.gz
+            dist/ofxtvOSBoost-${{ env.BOOST_VERSION }}.tar.gz.sha256
+            dist/ofxtvOSBoost.podspec
+            dist/ofxtvOSBoost-${{ env.BOOST_VERSION }}-xcframework.zip
+            dist/ofxtvOSBoost-${{ env.BOOST_VERSION }}-xcframework.zip.sha256
+            dist/release-manifest.env
+            dist/tvos-simulator-report.txt
+          if-no-files-found: error
+
+      - name: Push prepared checksum commit
+        if: github.event_name == 'workflow_dispatch' && inputs.operation == 'prepare'
+        run: |
+          remote_sha="$(git ls-remote origin refs/heads/master | awk '{print $1}')"
+          test "$remote_sha" = "$GITHUB_SHA"
+          git push origin HEAD:master
+

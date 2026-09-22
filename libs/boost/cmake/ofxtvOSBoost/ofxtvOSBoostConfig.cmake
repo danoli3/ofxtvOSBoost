@@ -1,0 +1,45 @@
+# Relocatable CMake package for the ofxtvOSBoost XCFramework.
+get_filename_component(_OFXTVOSBOOST_PREFIX "${CMAKE_CURRENT_LIST_DIR}/../.." ABSOLUTE)
+set(_OFXTVOSBOOST_XCFRAMEWORK "${_OFXTVOSBOOST_PREFIX}/tvos/boost.xcframework")
+
+if(NOT CMAKE_SYSTEM_NAME STREQUAL "tvOS")
+    message(FATAL_ERROR "ofxtvOSBoost 1.92.0 supports tvOS targets only")
+endif()
+
+string(TOLOWER "${CMAKE_OSX_SYSROOT}" _OFXTVOSBOOST_SYSROOT)
+if(_OFXTVOSBOOST_SYSROOT MATCHES "appletvsimulator")
+    set(_OFXTVOSBOOST_SLICE "tvos-arm64_x86_64-simulator")
+else()
+    set(_OFXTVOSBOOST_SLICE "tvos-arm64")
+endif()
+set(_OFXTVOSBOOST_LIBRARY "libboost.a")
+
+set(_OFXTVOSBOOST_LIBRARY_PATH
+    "${_OFXTVOSBOOST_XCFRAMEWORK}/${_OFXTVOSBOOST_SLICE}/${_OFXTVOSBOOST_LIBRARY}")
+set(_OFXTVOSBOOST_INCLUDE_PATH
+    "${_OFXTVOSBOOST_XCFRAMEWORK}/${_OFXTVOSBOOST_SLICE}/Headers")
+if(NOT EXISTS "${_OFXTVOSBOOST_LIBRARY_PATH}" OR
+   NOT IS_DIRECTORY "${_OFXTVOSBOOST_INCLUDE_PATH}")
+    message(FATAL_ERROR
+        "ofxtvOSBoost 1.92.0 is incomplete or has no slice for ${CMAKE_OSX_SYSROOT}")
+endif()
+
+if(NOT TARGET ofxtvOSBoost::boost)
+    add_library(ofxtvOSBoost::boost STATIC IMPORTED GLOBAL)
+    set_target_properties(ofxtvOSBoost::boost PROPERTIES
+        IMPORTED_LOCATION "${_OFXTVOSBOOST_LIBRARY_PATH}"
+        INTERFACE_INCLUDE_DIRECTORIES "${_OFXTVOSBOOST_INCLUDE_PATH}"
+        INTERFACE_COMPILE_FEATURES "cxx_std_20"
+    )
+endif()
+
+set(ofxtvOSBoost_VERSION "1.92.0")
+set(ofxtvOSBoost_FOUND TRUE)
+
+unset(_OFXTVOSBOOST_LIBRARY)
+unset(_OFXTVOSBOOST_LIBRARY_PATH)
+unset(_OFXTVOSBOOST_INCLUDE_PATH)
+unset(_OFXTVOSBOOST_SLICE)
+unset(_OFXTVOSBOOST_SYSROOT)
+unset(_OFXTVOSBOOST_XCFRAMEWORK)
+unset(_OFXTVOSBOOST_PREFIX)

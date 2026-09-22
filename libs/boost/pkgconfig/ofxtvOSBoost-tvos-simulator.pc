@@ -1,0 +1,10 @@
+prefix=${pcfiledir}/..
+xcframework=${prefix}/tvos/boost.xcframework
+libdir=${xcframework}/tvos-arm64_x86_64-simulator
+includedir=${libdir}/Headers
+
+Name: ofxtvOSBoost-simulator
+Description: Boost 1.92.0 static libraries for arm64/x86_64 tvOS Simulator
+Version: 1.92.0
+Cflags: -I${includedir} -std=c++20
+Libs: ${libdir}/libboost.a

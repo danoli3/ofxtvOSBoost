@@ -1,0 +1,363 @@
+#!/usr/bin/env bash
+set -euo pipefail
+BOOST_VERSION="${BOOST_VERSION:-1.92.0}"
+case "$BOOST_VERSION" in 1.92.0) ;; *) echo "Unsupported Boost version: $BOOST_VERSION" >&2; exit 2 ;; esac
+CPPSTD=c++20
+TVOS_MIN_VERSION="${TVOS_MIN_VERSION:-9.0}"
+SUPPORT_LIBS="atomic exception log_setup wserialization"
+BOOST_LIBS="chrono date_time filesystem graph locale random thread context nowide json serialization url log container timer type_erasure stacktrace cobalt charconv"
+command -v xcrun >/dev/null || { echo "Xcode command line tools are required." >&2; exit 1; }
+command -v curl >/dev/null || { echo "curl is required." >&2; exit 1; }
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+COMPONENT_MANIFEST="$REPO_ROOT/packaging/versions/$BOOST_VERSION-components.tsv"
+[[ -s "$COMPONENT_MANIFEST" ]] || { echo "Missing component manifest: $COMPONENT_MANIFEST" >&2; exit 1; }
+AVAILABLE_LIBS="$(awk -F '\t' '$1 == "included" || $1 == "excluded" { print $2 }' "$COMPONENT_MANIFEST" | paste -sd ' ' -)"
+for library in $BOOST_LIBS; do
+    [[ " $AVAILABLE_LIBS " == *" $library "* ]] || {
+        echo "Unknown compiled library '$library' for Boost $BOOST_VERSION." >&2
+        exit 2
+    }
+done
+EXCLUDED_LIBS=""
+for library in $AVAILABLE_LIBS; do
+    if [[ " $BOOST_LIBS $SUPPORT_LIBS " != *" $library "* ]]; then
+        EXCLUDED_LIBS="${EXCLUDED_LIBS:+$EXCLUDED_LIBS }$library"
+    fi
+done
+VERSION_UNDERSCORED="${BOOST_VERSION//./_}"
+ARCHIVE_NAME="ofxtvOSBoost-${BOOST_VERSION}"
+DIST_DIR="${DIST_DIR:-$REPO_ROOT/dist}"
+DOWNLOAD_CACHE="${BOOST_DOWNLOAD_CACHE:-${TMPDIR:-/tmp}/ofxtvOSBoost-downloads}"
+WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/ofxtvosboost.XXXXXX")"
+SOURCE_ARCHIVE="$WORK_DIR/boost_${VERSION_UNDERSCORED}.tar.bz2"
+SOURCE_DIR="$WORK_DIR/boost_${VERSION_UNDERSCORED}"
+BUILD_DIR="$WORK_DIR/build"
+PACKAGE_DIR="$WORK_DIR/$ARCHIVE_NAME"
+
+cleanup() {
+    local status=$?
+    rm -rf "$WORK_DIR"
+    return "$status"
+}
+trap cleanup EXIT
+
+JOBS="${JOBS:-$(sysctl -n hw.logicalcpu 2>/dev/null || echo 4)}"
+APPLETVOS_SDK="$(xcrun --sdk appletvos --show-sdk-path)"
+SIMULATOR_SDK="$(xcrun --sdk appletvsimulator --show-sdk-path)"
+MACOS_SDK="$(xcrun --sdk macosx --show-sdk-path)"
+CLANGXX="$(xcrun --find clang++)"
+
+echo "Downloading Boost $BOOST_VERSION"
+mkdir -p "$DOWNLOAD_CACHE"
+CACHED_ARCHIVE="$DOWNLOAD_CACHE/boost_${VERSION_UNDERSCORED}.tar.bz2"
+if [[ ! -s "$CACHED_ARCHIVE" ]]; then
+    curl --fail --location \
+        "https://archives.boost.io/release/${BOOST_VERSION}/source/boost_${VERSION_UNDERSCORED}.tar.bz2" \
+        --output "$CACHED_ARCHIVE.part"
+    mv "$CACHED_ARCHIVE.part" "$CACHED_ARCHIVE"
+fi
+cp "$CACHED_ARCHIVE" "$SOURCE_ARCHIVE"
+EXPECTED_SOURCE_SHA=5c1d40cb8e19adbf740a4ec2da35b3e58f3f5804b1dce44deb53df72193cbc6c
+ACTUAL_SOURCE_SHA="$(shasum -a 256 "$SOURCE_ARCHIVE" | awk '{print $1}')"
+[[ "$ACTUAL_SOURCE_SHA" == "$EXPECTED_SOURCE_SHA" ]] || { echo "Source checksum mismatch: $ACTUAL_SOURCE_SHA" >&2; exit 1; }
+tar -xjf "$SOURCE_ARCHIVE" -C "$WORK_DIR"
+patch --dry-run -d "$SOURCE_DIR" -p1 < "$REPO_ROOT/patches/boost-1.92.0-apple-build.patch"
+patch -d "$SOURCE_DIR" -p1 < "$REPO_ROOT/patches/boost-1.92.0-apple-build.patch"
+
+LIBS_CSV="${BOOST_LIBS// /,}"
+WITH_LIBRARIES=()
+for library in $BOOST_LIBS; do
+    WITH_LIBRARIES+=("--with-$library")
+done
+HOST_TOOLSET=clang
+(
+    cd "$SOURCE_DIR"
+    # The host engine needs an explicit SDK with current Xcode command-line tools.
+    if ! CC="$(xcrun --find clang)" \
+        CFLAGS="${CFLAGS:-} -isysroot $MACOS_SDK" \
+        ./bootstrap.sh --with-toolset="$HOST_TOOLSET" --with-libraries="$LIBS_CSV"; then
+        tail -n 200 bootstrap.log >&2
+        exit 1
+    fi
+    # The temporary host-only toolset is only needed to compile b2.
+    # It is not a valid Boost.Build library toolset in this Boost release.
+    rm -f project-config.jam
+)
+
+USER_CONFIG="$WORK_DIR/user-config.jam"
+cat > "$USER_CONFIG" <<EOF
+using darwin : tvosdevice
+    : $CLANGXX
+    : <compileflags>"-arch arm64 -isysroot $APPLETVOS_SDK -mtvos-version-min=$TVOS_MIN_VERSION -fPIC -fvisibility=hidden -Wno-deprecated-declarations -Wno-deprecated-builtins -Wno-unknown-warning-option"
+      <cxxflags>"-std=$CPPSTD -stdlib=libc++ -fvisibility-inlines-hidden"
+      <linkflags>"-arch arm64 -isysroot $APPLETVOS_SDK -mtvos-version-min=$TVOS_MIN_VERSION -stdlib=libc++"
+    ;
+using darwin : tvossimulatorarm64
+    : $CLANGXX
+    : <compileflags>"-arch arm64 -isysroot $SIMULATOR_SDK -mtvos-simulator-version-min=$TVOS_MIN_VERSION -fPIC -fvisibility=hidden -Wno-deprecated-declarations -Wno-deprecated-builtins -Wno-unknown-warning-option"
+      <cxxflags>"-std=$CPPSTD -stdlib=libc++ -fvisibility-inlines-hidden"
+      <linkflags>"-arch arm64 -isysroot $SIMULATOR_SDK -mtvos-simulator-version-min=$TVOS_MIN_VERSION -stdlib=libc++"
+    ;
+using darwin : tvossimulatorx86_64
+    : $CLANGXX
+    : <compileflags>"-arch x86_64 -isysroot $SIMULATOR_SDK -mtvos-simulator-version-min=$TVOS_MIN_VERSION -fPIC -fvisibility=hidden -Wno-deprecated-declarations -Wno-deprecated-builtins -Wno-unknown-warning-option"
+      <cxxflags>"-std=$CPPSTD -stdlib=libc++ -fvisibility-inlines-hidden"
+      <linkflags>"-arch x86_64 -isysroot $SIMULATOR_SDK -mtvos-simulator-version-min=$TVOS_MIN_VERSION -stdlib=libc++"
+    ;
+EOF
+
+build_platform() {
+    # B2 calls the embedded Apple target family iphone; the SDK/flags below are tvOS.
+    local name="$1"
+    local toolset="$2"
+    local architecture="$3"
+    local address_model="$4"
+    local abi=sysv
+    [[ "$architecture" != arm ]] || abi=aapcs
+    local context_properties=(abi="$abi" binary-format=mach-o)
+    local platform_sdk="$SIMULATOR_SDK"
+    [[ "$name" != device-* ]] || platform_sdk="$APPLETVOS_SDK"
+    local locale_properties=("-sICONV_PATH=$platform_sdk/usr")
+
+    echo "Building $name"
+    (
+        cd "$SOURCE_DIR"
+        ./b2 -j"$JOBS" \
+            "${WITH_LIBRARIES[@]}" \
+            --user-config="$USER_CONFIG" \
+            --build-dir="$BUILD_DIR/$name" \
+            --stagedir="$BUILD_DIR/$name/stage" \
+            toolset="$toolset" architecture="$architecture" address-model="$address_model" \
+            "${locale_properties[@]}" \
+            "${context_properties[@]}" \
+            target-os=iphone variant=release link=static runtime-link=static threading=multi \
+            stage
+    )
+
+    for library in $BOOST_LIBS; do
+        local archive_name="libboost_$library.a"
+        if [[ "$library" == "stacktrace" ]]; then
+            archive_name="libboost_stacktrace_basic.a"
+        fi
+        [[ -s "$BUILD_DIR/$name/stage/lib/$archive_name" ]] || {
+            echo "Missing requested library for $name: $archive_name" >&2
+            exit 1
+        }
+    done
+    # Stage can contain optional Cobalt IO and legacy Math wrappers. Merge only
+    # the declared components and these documented dependency/support archives.
+    local libraries=()
+    local component
+    for component in $BOOST_LIBS $SUPPORT_LIBS; do
+        [[ "$component" != stacktrace ]] || component=stacktrace_basic
+        local archive="$BUILD_DIR/$name/stage/lib/libboost_$component.a"
+        [[ -s "$archive" ]] || { echo "Missing $archive" >&2; exit 1; }
+        xcrun nm -gU "$archive" > "$BUILD_DIR/$name/$component.nm" 2>/dev/null
+        grep -Eq ' [TDS] ' "$BUILD_DIR/$name/$component.nm" || {
+            echo "No global definitions in $archive" >&2; exit 1;
+        }
+        libraries+=("$archive")
+    done
+    xcrun libtool -static -o "$BUILD_DIR/libboost-$name.a" "${libraries[@]}"
+}
+
+build_platform device-arm64 darwin-tvosdevice arm 64
+build_platform simulator-arm64 darwin-tvossimulatorarm64 arm 64
+build_platform simulator-x86_64 darwin-tvossimulatorx86_64 x86 64
+
+mkdir -p "$PACKAGE_DIR/include" "$DIST_DIR"
+cp -R "$SOURCE_DIR/boost" "$PACKAGE_DIR/include/"
+cp "$REPO_ROOT/packaging/swiftpm/module.modulemap" "$PACKAGE_DIR/include/"
+cp "$SOURCE_DIR/LICENSE_1_0.txt" "$PACKAGE_DIR/"
+xcrun lipo -create \
+    "$BUILD_DIR/libboost-simulator-arm64.a" \
+    "$BUILD_DIR/libboost-simulator-x86_64.a" \
+    -output "$BUILD_DIR/libboost-simulator.a"
+mkdir -p "$BUILD_DIR/xcframework-device" "$BUILD_DIR/xcframework-simulator"
+cp "$BUILD_DIR/libboost-device-arm64.a" "$BUILD_DIR/xcframework-device/libboost.a"
+cp "$BUILD_DIR/libboost-simulator.a" "$BUILD_DIR/xcframework-simulator/libboost.a"
+xcodebuild -create-xcframework \
+    -library "$BUILD_DIR/xcframework-device/libboost.a" -headers "$PACKAGE_DIR/include" \
+    -library "$BUILD_DIR/xcframework-simulator/libboost.a" -headers "$PACKAGE_DIR/include" \
+    -output "$PACKAGE_DIR/boost.xcframework"
+
+SOURCE_SHA="$(shasum -a 256 "$SOURCE_ARCHIVE" | awk '{ print $1 }')"
+BUILD_TIME="$(date -u '+%Y-%m-%d T%H:%M:%SZ')"
+BUILD_NUMBER="${GITHUB_RUN_NUMBER:-1}"
+write_pkl() {
+    local slice_dir="$1"
+    local binary="$2"
+    local binary_sha
+    binary_sha="$(shasum -a 256 "$slice_dir/$binary" | awk '{ print $1 }')"
+    cat > "$slice_dir/boost.pkl" <<EOF
+name = "boost"
+version = "$BOOST_VERSION"
+buildTime = "$BUILD_TIME"
+buildNumber = "$BUILD_NUMBER"
+type = "tvos"
+gitUrl = "https://github.com/boostorg/boost"
+cppStandard = "${CPPSTD#c++}"
+cStandard = ""
+linkerFlags = ""
+dependencies = ""
+binary = "$binary"
+binarySha = "$binary_sha"
+shaType = "sha256sum"
+sourceSHA = "$SOURCE_SHA"
+defines = ""
+frameworks = ""
+includedLibraries = "$BOOST_LIBS $SUPPORT_LIBS"
+excludedLibraries = "$EXCLUDED_LIBS"
+EOF
+}
+
+write_pkl "$PACKAGE_DIR/boost.xcframework/tvos-arm64" "libboost.a"
+write_pkl "$PACKAGE_DIR/boost.xcframework/tvos-arm64_x86_64-simulator" "libboost.a"
+
+write_component_text() {
+    local destination="$1"
+    {
+        echo "Boost $BOOST_VERSION compiled component inventory"
+        echo
+        echo "Included in this binary:"
+        for library in $BOOST_LIBS $SUPPORT_LIBS; do echo "- $library"; done
+        echo
+        echo "Not included in this binary:"
+        while IFS=$'\t' read -r status library note; do
+            [[ "$status" == "included" || "$status" == "excluded" ]] || continue
+            if [[ " $BOOST_LIBS $SUPPORT_LIBS " != *" $library "* ]]; then
+                echo "- $library: $note"
+            fi
+        done < "$COMPONENT_MANIFEST"
+        echo
+        echo "All Boost headers are packaged. 'Not included' means that the compiled"
+        echo "library is absent from the combined static binary; header-only facilities"
+        echo "remain available. See COMPONENTS.md for the release-level inventory."
+    } > "$destination"
+}
+
+write_component_text "$PACKAGE_DIR/boost.xcframework/tvos-arm64/boost-components.txt"
+write_component_text "$PACKAGE_DIR/boost.xcframework/tvos-arm64_x86_64-simulator/boost-components.txt"
+
+{
+    echo "# Boost $BOOST_VERSION component inventory"
+    echo
+    echo "The XCFramework contains all Boost headers. This inventory describes which"
+    echo "libraries contribute compiled objects to the combined static binaries."
+    echo
+    echo "| Component | Binary status | Notes |"
+    echo "| --- | --- | --- |"
+    while IFS=$'\t' read -r manifest_status library note; do
+        [[ "$manifest_status" == "included" || "$manifest_status" == "excluded" ]] || continue
+        if [[ " $BOOST_LIBS $SUPPORT_LIBS " == *" $library "* ]]; then status="Included"; else status="Not included"; fi
+        echo "| \`$library\` | $status | $note |"
+    done < "$COMPONENT_MANIFEST"
+} > "$PACKAGE_DIR/COMPONENTS.md"
+
+RELEASE_NOTES="$REPO_ROOT/packaging/versions/$BOOST_VERSION-release.md"
+if [[ -s "$RELEASE_NOTES" ]]; then
+    cp "$RELEASE_NOTES" "$PACKAGE_DIR/RELEASE-NOTES.md"
+fi
+VALIDATION_NOTES="$REPO_ROOT/packaging/versions/$BOOST_VERSION-validation.md"
+if [[ -s "$VALIDATION_NOTES" ]]; then
+    cp "$VALIDATION_NOTES" "$PACKAGE_DIR/VALIDATION.md"
+fi
+
+mkdir -p "$PACKAGE_DIR/cmake/ofxtvOSBoost" "$PACKAGE_DIR/pkgconfig"
+CMAKE_COMPILE_FEATURE="cxx_std_${CPPSTD#c++}"
+sed -e "s|@BOOST_VERSION@|$BOOST_VERSION|g" \
+    -e "s|@CMAKE_COMPILE_FEATURE@|$CMAKE_COMPILE_FEATURE|g" \
+    "$REPO_ROOT/packaging/cmake/ofxtvOSBoostConfig.cmake.in" \
+    > "$PACKAGE_DIR/cmake/ofxtvOSBoost/ofxtvOSBoostConfig.cmake"
+sed -e "s|@BOOST_VERSION@|$BOOST_VERSION|g" \
+    "$REPO_ROOT/packaging/cmake/ofxtvOSBoostConfigVersion.cmake.in" \
+    > "$PACKAGE_DIR/cmake/ofxtvOSBoost/ofxtvOSBoostConfigVersion.cmake"
+for pc_template in "$REPO_ROOT"/packaging/pkgconfig/*.pc.in; do
+    pc_name="$(basename "$pc_template" .in)"
+    sed -e "s|@BOOST_VERSION@|$BOOST_VERSION|g" \
+        -e "s|@CPPSTD@|$CPPSTD|g" "$pc_template" \
+        > "$PACKAGE_DIR/pkgconfig/$pc_name"
+done
+
+cat > "$PACKAGE_DIR/BUILD-INFO.txt" <<EOF
+Boost: $BOOST_VERSION
+tvOS deployment target: $TVOS_MIN_VERSION
+Architectures: arm64 (device), arm64 and x86_64 (simulator)
+Packaging: XCFramework
+Metadata: Apothecary PKL, CMake package, pkg-config
+C++ standard library: libc++
+C++ language standard: $CPPSTD
+Libraries: $BOOST_LIBS $SUPPORT_LIBS
+Excluded compiled libraries: $EXCLUDED_LIBS
+Component inventory: COMPONENTS.md and slice-local boost-components.txt
+Release notes: RELEASE-NOTES.md (when supplied for this Boost revision)
+Validation: VALIDATION.md (when supplied for this Boost revision)
+EOF
+
+(
+    cd "$PACKAGE_DIR"
+    ditto -c -k --sequesterRsrc --keepParent boost.xcframework \
+        "$DIST_DIR/$ARCHIVE_NAME-xcframework.zip"
+)
+
+# The main tarball is a ready-to-use addon. Keep the SwiftPM zip minimal, but
+# place the framework in the conventional openFrameworks addon location.
+ADDON_STAGE="$WORK_DIR/addon-package"
+ADDON_ROOT="$ADDON_STAGE/$ARCHIVE_NAME"
+mkdir -p "$ADDON_STAGE"
+git -C "$REPO_ROOT" archive --prefix="$ARCHIVE_NAME/" HEAD | \
+    tar -xf - -C "$ADDON_STAGE"
+rm -rf "$ADDON_ROOT/libs/boost/include" "$ADDON_ROOT/libs/boost/tvos"
+mkdir -p "$ADDON_ROOT/libs/boost/tvos"
+cp -R "$PACKAGE_DIR/boost.xcframework" "$ADDON_ROOT/libs/boost/tvos/"
+cp -R "$PACKAGE_DIR/cmake" "$PACKAGE_DIR/pkgconfig" "$ADDON_ROOT/libs/boost/"
+cp "$PACKAGE_DIR/LICENSE_1_0.txt" "$PACKAGE_DIR/BUILD-INFO.txt" \
+    "$PACKAGE_DIR/COMPONENTS.md" "$ADDON_ROOT/"
+for metadata in RELEASE-NOTES.md VALIDATION.md; do
+    if [[ -s "$PACKAGE_DIR/$metadata" ]]; then
+        cp "$PACKAGE_DIR/$metadata" "$ADDON_ROOT/"
+    fi
+done
+tar -czf "$DIST_DIR/$ARCHIVE_NAME.tar.gz" -C "$ADDON_STAGE" "$ARCHIVE_NAME"
+
+ARCHIVE_SHA="$(shasum -a 256 "$DIST_DIR/$ARCHIVE_NAME.tar.gz" | awk '{ print $1 }')"
+sed -e "s|@BOOST_VERSION@|$BOOST_VERSION|g" \
+    -e "s|@TVOS_MIN_VERSION@|$TVOS_MIN_VERSION|g" \
+    -e "s|@ARCHIVE_SHA@|$ARCHIVE_SHA|g" \
+    "$REPO_ROOT/packaging/cocoapods/ofxtvOSBoost.podspec.in" \
+    > "$DIST_DIR/ofxtvOSBoost.podspec"
+(
+    cd "$DIST_DIR"
+    shasum -a 256 "$ARCHIVE_NAME.tar.gz" > "$ARCHIVE_NAME.tar.gz.sha256"
+    shasum -a 256 "$ARCHIVE_NAME-xcframework.zip" > "$ARCHIVE_NAME-xcframework.zip.sha256"
+)
+
+if [[ "${GITHUB_ACTIONS:-false}" != "true" ]]; then
+    INSTALL_ROOT="$REPO_ROOT/libs/boost"
+    INSTALL_FRAMEWORK="$INSTALL_ROOT/tvos/boost.xcframework"
+    INSTALL_CMAKE="$INSTALL_ROOT/cmake"
+    INSTALL_PKGCONFIG="$INSTALL_ROOT/pkgconfig"
+
+    [[ "$INSTALL_FRAMEWORK" == "$REPO_ROOT/libs/boost/tvos/boost.xcframework" ]] || exit 1
+    [[ "$INSTALL_CMAKE" == "$REPO_ROOT/libs/boost/cmake" ]] || exit 1
+    [[ "$INSTALL_PKGCONFIG" == "$REPO_ROOT/libs/boost/pkgconfig" ]] || exit 1
+    for install_target in "$INSTALL_FRAMEWORK" "$INSTALL_CMAKE" "$INSTALL_PKGCONFIG"; do
+        [[ ! -L "$install_target" ]] || {
+            echo "Refusing to replace symbolic link: $install_target" >&2
+            exit 1
+        }
+    done
+
+    mkdir -p "$INSTALL_ROOT/tvos"
+    rm -rf "$INSTALL_FRAMEWORK" "$INSTALL_CMAKE" "$INSTALL_PKGCONFIG"
+    cp -R "$PACKAGE_DIR/boost.xcframework" "$INSTALL_FRAMEWORK"
+    cp -R "$PACKAGE_DIR/cmake" "$INSTALL_CMAKE"
+    cp -R "$PACKAGE_DIR/pkgconfig" "$INSTALL_PKGCONFIG"
+    echo "Installed Boost $BOOST_VERSION at $INSTALL_FRAMEWORK"
+fi
+
+echo "Created $DIST_DIR/$ARCHIVE_NAME.tar.gz"
+echo "Created $DIST_DIR/ofxtvOSBoost.podspec"
+echo "Created $DIST_DIR/$ARCHIVE_NAME-xcframework.zip"

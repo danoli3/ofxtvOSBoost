@@ -1,7 +1,3 @@
-#!/bin/sh
-
-here="`dirname \"$0\"`"
-echo "cd-ing to $here"
-cd "$here" || exit 1
-
-./build-libc++.sh
+#!/usr/bin/env bash
+set -euo pipefail
+exec "$(cd "$(dirname "$0")" && pwd)/build-boost-tvos.sh" "$@"

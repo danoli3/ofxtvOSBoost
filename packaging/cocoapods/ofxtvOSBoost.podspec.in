@@ -1,21 +1,24 @@
 Pod::Spec.new do |s|
   s.name                  = "ofxtvOSBoost"
-  s.version               = "1.92.0"
+  s.version               = "@BOOST_VERSION@"
   s.summary               = "Boost C++ libraries precompiled for tvOS"
   s.description           = <<-DESC
-Boost 1.92.0 packaged as a static XCFramework for arm64 tvOS devices
+Boost @BOOST_VERSION@ packaged as a static XCFramework for arm64 tvOS devices
 and arm64/x86_64 tvOS Simulators. The package contains the complete Boost header
 tree and a documented selection of compiled Boost libraries.
                             DESC
   s.homepage              = "https://github.com/danoli3/ofxtvOSBoost"
-  s.documentation_url     = "https://github.com/danoli3/ofxtvOSBoost/releases/tag/1.92.0"
-  s.license               = { :type => "BSL-1.0", :file => "LICENSE.md" }
+  s.documentation_url     = "https://github.com/danoli3/ofxtvOSBoost/releases/tag/@BOOST_VERSION@"
+  s.license               = { :type => "BSL-1.0", :file => "LICENSE_1_0.txt" }
   s.author                = { "Danoli3" => "danoli3@gmail.com" }
 
-  s.platform              = :tvos, "9.0"
+  s.platform              = :tvos, "@TVOS_MIN_VERSION@"
   s.cocoapods_version     = ">= 1.9"
   s.requires_arc          = false
-  s.source                = { :git => "https://github.com/danoli3/ofxtvOSBoost.git", :tag => s.version.to_s }
+  s.source                = {
+    :http => "https://github.com/danoli3/ofxtvOSBoost/releases/download/@BOOST_VERSION@/ofxtvOSBoost-@BOOST_VERSION@.tar.gz",
+    :sha256 => "@ARCHIVE_SHA@"
+  }
 
   s.vendored_frameworks   = "libs/boost/tvos/boost.xcframework"
   s.libraries             = "c++"

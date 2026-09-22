@@ -1,119 +1,77 @@
-#ofxtvOSBoost for Boost 1.59.0  ![image](https://travis-ci.org/danoli3/ofxtvOSBoost.svg?branch=master)
-=====================================
+# ofxtvOSBoost
 
+Boost **1.92.0** preparation for tvOS, using **C++20**, libc++, and the existing
+**tvOS 9.0** deployment target. This version is not yet published.
 
-### Boost C++ Libraries 1.59.0 Pre-compiled for tvOS
-![image](https://github.com/danoli3/ofxtvOSBoost/blob/master/ofxaddons_thumbnail.png)
+| Platform | Architectures |
+| --- | --- |
+| Apple TV device | arm64 |
+| tvOS Simulator | arm64, x86_64 |
 
-- Addon with Boost 1.59.0 for tvOS / Xcode 
-- Precompiled library and Command to build yourself
-- Master is currently a Fat Lib of All Standard Architectures
-- Check Branches for others or to be specific 
-- Designed for use as an open frameworks addon, however should definitely work for other tvOS projects
-- Built with clang++ and using libc++ and std=c++11
-- License: See Boost License [LICENSE.MD](https://github.com/danoli3/ofxtvOSBoost/blob/master/LICENSE.md)
+The XCFramework separates device and Simulator binaries. All upstream Boost
+headers are included; see [component inventory](packaging/versions/1.92.0-components.tsv)
+for the compiled selection and exclusions. Signals was removed upstream; use
+Signals2. System and modern Regex APIs are header-only. Redis uses separate
+compilation; there is no invented Redis or System archive.
 
-============
+## Build and validate locally
 
-
-### Where to checkout?
-
-- For openframeworks: Checkout in the addons folder like so: addons/ofxtvOSBoost
-- For others: anywhere you please
-
-
-
-============
-
-### How To Link to an Xcode Project?
-
-In Xcode **Build Settings** for your project:
-
-- Add to **Library Search Paths** ( ```LIBRARY_SEARCH_PATHS``` ) ```$(SRCROOT)/../../../addons/ofxtvOSBoost/libs/boost/lib/tvos ```
-- Add to **Header Search Paths** ( ```HEADER_SEARCH_PATHS``` )  
-```$(SRCROOT)/../../../addons/ofxtvOSBoost/libs/boost/include ```
-
-In Xcode for a **Build Target** select the **Target under Build Phases**
-
-- Add to **'Link Binary With Libraries'** the ```libboost.a``` found in the ```ofxtvOSBoost/libs/boost/lib/tvos``` directory.
-
-If not openFrameworks just add the ``` libs/boost/include ``` to Header Search Paths and the  ``` libs/boost/tvos ``` to Library Search Paths
-
-
-
-============
-
-### Architectures in Pre-Build Library (Fat Lib)
-See the other branches on this repository (All libc++ std=c11 with bitcode)
-
-- ```arm64``` : (AppleTV 4)
-
-- ```x86_64```: (AppleTVSimulator / tvOS Simulator)
-
-Check Apple's Hardware sheet if you need to verify: [Apple's Device compatibilty Matrix](https://developer.apple.com/library/tvos/documentation/DeviceInformation/Reference/tvOSDeviceCompatibility/DeviceCompatibilityMatrix/DeviceCompatibilityMatrix.html)
-
-** Armv7s has been removed due to Apple phasing our the requirement from the STANDARD_ARCHITECTURES.
-
-============
-
-### How to Build?
-
-1. You don't need to. This has the pre-compiled versions of BOOST for you to use
-2. If you would prefer to build it yourself checkout the script included in the ``` scripts ``` directory.
-
-
-=============
-
-### How to use Build Script
-
-
-- Download files (suggested you download the files to addons/ofxtvOSBoost for openFrameworks)
-- Double click and run ```scripts/build-libc++.command``` (this will download the 1.59.0 version of boost and begin compiling the library).
-- Once completed in the terminal continue with the next steps.
-- Add the ofxtvOSBoost to your project (src and libs for your chosen architecture)`
-
-#### Clean script
-- Run the clean script from ```scripts/cleanAll.command``` to remove pre-compiled code and the final built library
-
-
-============
-
-#### Documentation on Boost 1.59.0
-
-
-See: http://www.boost.org/users/history/version_1_59_0.html
-
-
-### Version 1.59.0 (Date): August 13th, 2015
-
-============
-
-
-
-### Troubleshooting:
-
-### Undefined symbols link error (For libc++ release)
-If you use libraries like `serialization` you might see link errors in Xcode 6 especially when the framework was built using `--with-c++11` flag.
-```
-    Undefined symbols for architecture i386:
-    "std::__1::__vector_base_common<true>::__throw_length_error() const", referenced from:
-    void std::__1::vector<boost::archive::detail::basic_iarchive_impl::cobject_id, std::__1::allocator<boost::archive::detail::basic_iarchive_impl::cobject_id> >::__push_back_slow_path<boost::archive::detail::basic_iarchive_impl::cobject_id>(boost::archive::detail::basic_iarchive_impl::cobject_id&&) in boost(libboost_serialization_basic_iarchive.o)
+```sh
+./scripts/build-boost-tvos.sh
+./scripts/validate-artifacts.sh
+./example-xcframework/build.sh dist/ofxtvOSBoost-1.92.0.tar.gz
+./example-swift-package/build.sh dist/ofxtvOSBoost-1.92.0.tar.gz
+./scripts/test-cocoapods-project.sh 1.92.0
+./scripts/test-simulator.sh
 ```
 
-You have to change your project or target build settings.
+Xcode must supply the AppleTVOS and AppleTVSimulator SDKs. The builder verifies
+the official source SHA-256 before extraction. `BOOST_DOWNLOAD_CACHE` can point
+to a previously downloaded official archive; verification still runs. `JOBS`
+controls build concurrency. Neither old build wrapper enables bitcode.
 
-Under *Apple LLVM 6.0 - Language - C++* make the following changes
+The canonical app runs one named test per frame and writes
+`tmp/ofxtvOSBoost-smoke-report.txt`. A runtime pass requires `Boost 1_92` and the
+terminal `ALL TESTS PASSED` marker. A successful compilation is only a link test.
+Physical Apple TV runtime remains pending until actually observed.
 
-```C++ Language Dialect``` to ```C++11 [-std=c++11]```
-```C++ Standard Library``` to ```libc++ (LLVM C++ standard library with C++11 support)```
+## Use the package
 
-### Parse errors when including `boost/type_traits.hpp`
-If you happen to include `<boost/type_traits.hpp>` header file, you may see compile errors like this
+After publication, `./scripts/install-boost.sh 1.92.0` verifies and installs the
+addon archive. Add `libs/boost/tvos/boost.xcframework` to an Xcode project and
+select C++20 and tvOS 9.0 or newer. Never link device and Simulator archives as
+one fat library. Legacy 1.59 headers and `libboost.a` are historical tracked
+files; modern projects exclusively use the XCFramework headers and binary.
 
-    Unexpected member name of ';' after declaration specifiers
+SwiftPM uses the root `Package.swift` and the checksum of the final ZIP. The
+example package uses a local XCFramework. CocoaPods release metadata is generated
+in `dist/ofxtvOSBoost.podspec` with the addon archive checksum. CMake consumers use
+`find_package(ofxtvOSBoost CONFIG REQUIRED)` and link `ofxtvOSBoost::boost`.
+Pkg-config metadata is supplied for device and Simulator separately.
 
-To fix this problem, include the following line in your porject `***-Prefix.pch` file.
+## Two-stage release
 
-    #define __ASSERT_MACROS_DEFINE_VERSIONS_WITHOUT_UNDERSCORES 0
+1. `release-boost.yml` validates on push or manual dispatch. Its manual `prepare`
+   operation builds once, validates, commits the exact ZIP checksum, reassembles
+   addon sources from that commit without rebuilding the ZIP, uploads the saved
+   artifacts, and pushes the checksum commit. Dispatching prepare therefore
+   requires explicit authorization to push.
+2. `publish-boost.yml` is separately dispatched with that preparation run ID.
+   It verifies the saved checksums and source commit, then tags and publishes
+   those exact artifacts. It never builds binaries. CocoaPods registry submission
+   is a separate explicitly authorized action.
 
+Preparation does **not** automatically dispatch publication. Local preparation
+never pushes, tags, dispatches workflows, or publishes. See [AGENTS.md](AGENTS.md)
+for recovery and final checks, and [validation status](packaging/versions/1.92.0-validation.md)
+for observed results.
 
+## Version history
+
+| Boost | C++ | Status |
+| --- | --- | --- |
+| 1.92.0 | C++20 | Local preparation; publication and physical Apple TV runtime pending |
+| 1.59.0 | C++11 | [Legacy release](https://github.com/danoli3/ofxtvOSBoost/releases/tag/v1.59.0-libc%2B%2B); missing modern assets/checksums and successful CI evidence |
+
+On 2026-09-18 the maintainer explicitly authorized advancing past the incomplete
+legacy-release gate. This exception does not authorize publication.

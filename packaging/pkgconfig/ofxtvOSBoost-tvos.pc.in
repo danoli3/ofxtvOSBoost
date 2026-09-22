@@ -1,0 +1,10 @@
+prefix=${pcfiledir}/..
+xcframework=${prefix}/tvos/boost.xcframework
+libdir=${xcframework}/tvos-arm64
+includedir=${libdir}/Headers
+
+Name: ofxtvOSBoost
+Description: Boost @BOOST_VERSION@ static libraries for arm64 tvOS devices
+Version: @BOOST_VERSION@
+Cflags: -I${includedir} -std=@CPPSTD@
+Libs: ${libdir}/libboost.a

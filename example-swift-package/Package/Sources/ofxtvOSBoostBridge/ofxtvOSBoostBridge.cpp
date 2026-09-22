@@ -1,0 +1,80 @@
+#include "ofxtvOSBoostBridge.h"
+
+#include <boost/filesystem.hpp>
+#include <boost/regex.hpp>
+#include <boost/version.hpp>
+
+#if BOOST_VERSION >= 108500
+#include <boost/charconv.hpp>
+#endif
+
+#if BOOST_VERSION >= 106200
+#include <boost/qvm/vec.hpp>
+#endif
+
+#if BOOST_VERSION >= 106300
+#include <boost/atomic.hpp>
+#include <boost/type_index/runtime_cast.hpp>
+
+namespace {
+struct RuntimeBase {
+    BOOST_TYPE_INDEX_REGISTER_RUNTIME_CLASS()
+    virtual ~RuntimeBase() {}
+};
+
+struct RuntimeDerived : RuntimeBase {
+#if BOOST_VERSION >= 108400
+    BOOST_TYPE_INDEX_REGISTER_RUNTIME_CLASS(RuntimeBase)
+#else
+    BOOST_TYPE_INDEX_REGISTER_RUNTIME_CLASS((RuntimeBase))
+#endif
+};
+} // namespace
+#endif
+
+const char *ofxtvOSBoostVersion(void)
+{
+    return BOOST_LIB_VERSION;
+}
+
+bool ofxtvOSBoostRunLinkTest(void)
+{
+    const boost::filesystem::path path("/tmp/ofxtvOSBoost/swift-package.txt");
+    const boost::regex expected("swift-package\\.txt");
+    if (!boost::regex_match(path.filename().string(), expected)) {
+        return false;
+    }
+
+#if BOOST_VERSION >= 106200
+    const boost::qvm::vec<int, 3> vector = {{1, 2, 3}};
+    if (vector.a[0] + vector.a[1] + vector.a[2] != 6) {
+        return false;
+    }
+#endif
+
+#if BOOST_VERSION >= 106300
+    RuntimeDerived derived;
+    RuntimeBase *base = &derived;
+    if (boost::typeindex::runtime_cast<RuntimeDerived *>(base) != &derived) {
+        return false;
+    }
+    if (boost::atomic<int>::is_always_lock_free != boost::atomic<int>().is_lock_free()) {
+        return false;
+    }
+#endif
+
+#if BOOST_VERSION >= 108500
+    char buffer[32]{};
+    const auto encoded = boost::charconv::to_chars(
+        buffer, buffer + sizeof(buffer), 85.25);
+    double decoded = 0.0;
+    const auto parsed = boost::charconv::from_chars(
+        buffer, encoded.ptr, decoded);
+    if (encoded.ec != std::errc() || parsed.ec != std::errc() ||
+        decoded != 85.25) {
+        return false;
+    }
+#endif
+
+    return true;
+}
