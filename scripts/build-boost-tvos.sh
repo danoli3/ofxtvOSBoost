@@ -334,29 +334,28 @@ sed -e "s|@BOOST_VERSION@|$BOOST_VERSION|g" \
     shasum -a 256 "$ARCHIVE_NAME-xcframework.zip" > "$ARCHIVE_NAME-xcframework.zip.sha256"
 )
 
-if [[ "${GITHUB_ACTIONS:-false}" != "true" ]]; then
-    INSTALL_ROOT="$REPO_ROOT/libs/boost"
-    INSTALL_FRAMEWORK="$INSTALL_ROOT/tvos/boost.xcframework"
-    INSTALL_CMAKE="$INSTALL_ROOT/cmake"
-    INSTALL_PKGCONFIG="$INSTALL_ROOT/pkgconfig"
+# Install the generated package in the addon tree on local and CI builds.
+INSTALL_ROOT="$REPO_ROOT/libs/boost"
+INSTALL_FRAMEWORK="$INSTALL_ROOT/tvos/boost.xcframework"
+INSTALL_CMAKE="$INSTALL_ROOT/cmake"
+INSTALL_PKGCONFIG="$INSTALL_ROOT/pkgconfig"
 
-    [[ "$INSTALL_FRAMEWORK" == "$REPO_ROOT/libs/boost/tvos/boost.xcframework" ]] || exit 1
-    [[ "$INSTALL_CMAKE" == "$REPO_ROOT/libs/boost/cmake" ]] || exit 1
-    [[ "$INSTALL_PKGCONFIG" == "$REPO_ROOT/libs/boost/pkgconfig" ]] || exit 1
-    for install_target in "$INSTALL_FRAMEWORK" "$INSTALL_CMAKE" "$INSTALL_PKGCONFIG"; do
-        [[ ! -L "$install_target" ]] || {
-            echo "Refusing to replace symbolic link: $install_target" >&2
-            exit 1
-        }
-    done
+[[ "$INSTALL_FRAMEWORK" == "$REPO_ROOT/libs/boost/tvos/boost.xcframework" ]] || exit 1
+[[ "$INSTALL_CMAKE" == "$REPO_ROOT/libs/boost/cmake" ]] || exit 1
+[[ "$INSTALL_PKGCONFIG" == "$REPO_ROOT/libs/boost/pkgconfig" ]] || exit 1
+for install_target in "$INSTALL_FRAMEWORK" "$INSTALL_CMAKE" "$INSTALL_PKGCONFIG"; do
+    [[ ! -L "$install_target" ]] || {
+        echo "Refusing to replace symbolic link: $install_target" >&2
+        exit 1
+    }
+done
 
-    mkdir -p "$INSTALL_ROOT/tvos"
-    rm -rf "$INSTALL_FRAMEWORK" "$INSTALL_CMAKE" "$INSTALL_PKGCONFIG"
-    cp -R "$PACKAGE_DIR/boost.xcframework" "$INSTALL_FRAMEWORK"
-    cp -R "$PACKAGE_DIR/cmake" "$INSTALL_CMAKE"
-    cp -R "$PACKAGE_DIR/pkgconfig" "$INSTALL_PKGCONFIG"
-    echo "Installed Boost $BOOST_VERSION at $INSTALL_FRAMEWORK"
-fi
+mkdir -p "$INSTALL_ROOT/tvos"
+rm -rf "$INSTALL_FRAMEWORK" "$INSTALL_CMAKE" "$INSTALL_PKGCONFIG"
+cp -R "$PACKAGE_DIR/boost.xcframework" "$INSTALL_FRAMEWORK"
+cp -R "$PACKAGE_DIR/cmake" "$INSTALL_CMAKE"
+cp -R "$PACKAGE_DIR/pkgconfig" "$INSTALL_PKGCONFIG"
+echo "Installed Boost $BOOST_VERSION at $INSTALL_FRAMEWORK"
 
 echo "Created $DIST_DIR/$ARCHIVE_NAME.tar.gz"
 echo "Created $DIST_DIR/ofxtvOSBoost.podspec"

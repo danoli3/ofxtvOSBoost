@@ -173,7 +173,6 @@
 				CODE_SIGN_STYLE = Automatic;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Info.plist;
-				TVOS_DEPLOYMENT_TARGET = 9.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -188,6 +187,7 @@
 				SDKROOT = appletvos;
 				SUPPORTED_PLATFORMS = "appletvos appletvsimulator";
 				TARGETED_DEVICE_FAMILY = 3;
+				TVOS_DEPLOYMENT_TARGET = 17.6;
 			};
 			name = Debug;
 		};
@@ -198,7 +198,6 @@
 				CODE_SIGN_STYLE = Automatic;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Info.plist;
-				TVOS_DEPLOYMENT_TARGET = 9.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -213,6 +212,7 @@
 				SDKROOT = appletvos;
 				SUPPORTED_PLATFORMS = "appletvos appletvsimulator";
 				TARGETED_DEVICE_FAMILY = 3;
+				TVOS_DEPLOYMENT_TARGET = 17.6;
 			};
 			name = Release;
 		};

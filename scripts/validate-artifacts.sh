@@ -22,7 +22,7 @@ for slice in tvos-arm64 tvos-arm64_x86_64-simulator; do
     archs=arm64
     [[ "$slice" != *simulator ]] || archs='arm64 x86_64'
     for arch in $archs; do
-        xcrun lipo -verify_arch "$arch" "$lib"
+        xcrun lipo "$lib" -verify_arch "$arch"
         xcrun nm -arch "$arch" -gU "$lib" > "$work/defined.nm" 2>/dev/null
         xcrun nm -arch "$arch" -u "$lib" > "$work/undefined.nm" 2>/dev/null
         for symbol in _make_fcontext _jump_fcontext _ontop_fcontext boost8charconv boost10filesystem boost6chrono boost6locale boost6random boost9container boost4json boost4urls boost3log boost6detail boost6cobalt; do

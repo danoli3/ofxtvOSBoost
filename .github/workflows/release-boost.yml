@@ -68,8 +68,7 @@ jobs:
 
       - name: Run complete suite in tvOS Simulator
         run: |
-          mkdir -p libs/boost/tvos
-          ditto -x -k "dist/ofxtvOSBoost-${BOOST_VERSION}-xcframework.zip" libs/boost/tvos
+          test -s libs/boost/tvos/boost.xcframework/tvos-arm64_x86_64-simulator/libboost.a
           ./scripts/test-simulator.sh
 
       - name: Build Swift package example
@@ -156,4 +155,3 @@ jobs:
           remote_sha="$(git ls-remote origin refs/heads/master | awk '{print $1}')"
           test "$remote_sha" = "$GITHUB_SHA"
           git push origin HEAD:master
-
