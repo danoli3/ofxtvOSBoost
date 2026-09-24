@@ -1,5 +1,7 @@
 # ofxtvOSBoost
 
+![ofxtvOSBoost](ofxaddons_thumbnail.png)
+
 Boost **1.92.0** preparation for tvOS, using **C++20**, libc++, and the existing
 **tvOS 9.0** deployment target. This version is not yet published.
 
@@ -72,6 +74,3 @@ for observed results.
 | --- | --- | --- |
 | 1.92.0 | C++20 | Local preparation; publication and physical Apple TV runtime pending |
 | 1.59.0 | C++11 | [Legacy release](https://github.com/danoli3/ofxtvOSBoost/releases/tag/v1.59.0-libc%2B%2B); missing modern assets/checksums and successful CI evidence |
-
-On 2026-09-18 the maintainer explicitly authorized advancing past the incomplete
-legacy-release gate. This exception does not authorize publication.
